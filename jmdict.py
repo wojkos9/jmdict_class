@@ -1,11 +1,11 @@
 from jamdict import Jamdict
 from jamdict.jmdict import JMDEntry
+from dataclasses import dataclass
 import csv
 
 jm = Jamdict()
-poss = {}
 
-POS_TABLE = {
+POS_MAP = {
     "noun": "n",
     "adjectival nouns": "adj-no",
     "suru verb": "vs",
@@ -22,63 +22,97 @@ POS_TABLE = {
     "counter": "n",
     "numeric": "number",
     "prefix": "pref",
+    "suffix": "suf",
     "'taru' adjective": "adj",
     "particle": "prt"
 }
 
-SIMPLE_POS = {
-    "verb": ["vs", "u-v", "ru-v", "v"],
-    "noun": ["n", "adj-no"],
-    "adjective": ["adj", "adj-pn"],
-    "adverb": ["adv"]
+CAT_MAP = {
+    "verbs": ["u-v", "ru-v", "v", "vs"],
+    "nouns": ["n", "adj-no"],
+    "adjectives": ["adj", "adj-pn"],
+    "adverbs": ["adv"],
+    "other": ["int", "conj", "expr", "number", "pref", "suf", "prt", "unknown"]
 }
 
-SPOS_TABLE = {}
+@dataclass
+class JLPTWord:
+    pos: str
+    kanji: str
+    kana: str
+    meaning: str
 
-for spos, pos in SIMPLE_POS.items():
-    for p in pos:
-        SPOS_TABLE[p] = spos
-
-other = []
-for desc, pos in POS_TABLE.items():
-    if pos not in SPOS_TABLE:
-        other.append(pos)
-
-other_name = "/".join(other)
-for o in other:
-    SPOS_TABLE[o] = other_name
-
-print(SPOS_TABLE)
-
-def get_pos(word):
-    r: JMDEntry = next(jm.lookup_iter(word).entries, None)
-    if r is None:
-        return []
-    return set(sum((s.pos for s in r.senses), []))
-
-def classify(word):
+def classify(word) -> tuple[str, JMDEntry]:
     entry: JMDEntry = next(jm.lookup_iter(word).entries, None)
     if entry is None:
-        return []
+        return "unknown", None
     sense = entry.senses[0]
     pos_desc: str = sense.pos[0]
-    pos: str = None
-    for desc, pos in POS_TABLE.items():
-        if pos_desc.startswith(desc):
-            spos = SPOS_TABLE[pos]
-            return [(spos, ";".join(s.text for s in sense.gloss))]
 
-    raise Exception(f"Unknown POS {pos_desc}: {word}")
+    pos = next((pos for desc, pos in POS_MAP.items() if pos_desc.startswith(desc)), None)
+
+    if pos is None:
+        raise Exception(f"Unknown POS {pos_desc}: {word}")
+
+    return pos, entry
 
 
-with open("n3.csv") as f:
-    reader = csv.reader(f)
-    next(reader)
-    for _, kanji, kana, *_ in reader:
-        word = kanji or kana
-        pos = classify(word)
-        for p, s in pos:
-            if not p in poss:
-                poss[p] = []
-            poss[p].append(f"{word}-{s}")
-print(poss)
+def get_pos_words(fname: str) -> dict[str, list[JLPTWord]]:
+    pos_words = { pos: [] for pos  in set(POS_MAP.values())}
+    pos_words["unknown"] = []
+    with open(fname) as f:
+        reader = csv.reader(f)
+        next(reader)
+        for kanji, kana, meaning, _ in reader:
+            word = kanji or kana
+            pos, e = classify(word)
+
+            if e is not None:
+                gloss = e.senses[0].gloss
+                count = min(len(gloss), 2)
+                senses = [s.text for s in gloss[:count]]
+                meaning = "; ".join(senses)
+
+            pos_words[pos].append(
+                JLPTWord(pos, kanji, kana, meaning)
+            )
+    return pos_words
+
+NUM_TABLE = str.maketrans({
+    chr(ord("0") + i): chr(ord("０") + i) for i in range(10)
+})
+
+def read_accents(fname: str):
+    accent_map = {}
+    with open(fname, "r") as f:
+        reader = csv.reader(f, delimiter="\t")
+        for kanji, kana, pitch in reader:
+            pitch_map = accent_map.get(kanji, {})
+            pitch_map[kana] = pitch.split(",")[0]
+            accent_map[kanji] = pitch_map
+    return accent_map
+
+
+if __name__ == "__main__":
+    pos_words = get_pos_words("n2.csv")
+    accents = read_accents("accents.txt")
+    for cat, pos_list in CAT_MAP.items():
+        words: list[JLPTWord] = sum([pos_words[pos] for pos in pos_list], [])
+        words.sort(key=lambda w: (w.kana, w.kanji))
+        print(cat.upper())
+        kanji_len = max(len(w.kanji) for w in words)
+        kana_len = max(len(w.kana) for w in words)
+        n = len(words)
+        n_len = len(str(n))
+        for i, w in enumerate(words):
+            index_jap = str(i+1).translate(NUM_TABLE)
+            index_str = index_jap.ljust(n_len, "　") + "　"
+            kanji_str = w.kanji.ljust(kanji_len, "　")
+            kana_str = w.kana.ljust(kana_len, "　")
+            pitch_map = accents.get(w.kanji)
+            if pitch_map is not None:
+                pitch = pitch_map.get(w.kana)
+            else:
+                pitch = "-"
+            print(index_str + kanji_str, kana_str, pitch, w.meaning, sep="　")
+        print()
