@@ -92,6 +92,17 @@ def read_accents(fname: str):
             accent_map[kanji] = pitch_map
     return accent_map
 
+def split_moras(kana: str):
+    moras = []
+    s = kana[0]
+    for c in kana[1:]:
+        if c in "ゃゅょャュョ":
+            s += c
+        else:
+            moras += s
+            s = c
+    moras += s
+    return moras
 
 if __name__ == "__main__":
     pos_words = get_pos_words("n2.csv")
@@ -109,10 +120,11 @@ if __name__ == "__main__":
             index_str = index_jap.ljust(n_len, "　") + "　"
             kanji_str = w.kanji.ljust(kanji_len, "　")
             kana_str = w.kana.ljust(kana_len, "　")
+            moras = "-".join(split_moras(w.kana))
             pitch_map = accents.get(w.kanji)
             if pitch_map is not None:
                 pitch = pitch_map.get(w.kana)
             else:
                 pitch = "-"
-            print(index_str + kanji_str, kana_str, pitch, w.meaning, sep="　")
+            print(index_str + kanji_str, kana_str, moras, pitch, w.meaning, sep="　")
         print()
