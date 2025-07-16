@@ -2,6 +2,7 @@ from jamdict import Jamdict
 from jamdict.jmdict import JMDEntry
 from dataclasses import dataclass
 import csv
+import re
 
 jm = Jamdict()
 
@@ -88,7 +89,7 @@ def read_accents(fname: str):
         reader = csv.reader(f, delimiter="\t")
         for kanji, kana, pitch in reader:
             pitch_map = accent_map.get(kanji, {})
-            pitch_map[kana] = pitch.split(",")[0]
+            pitch_map[kana] = re.search(r"\d+", pitch).group(0)
             accent_map[kanji] = pitch_map
     return accent_map
 
@@ -99,7 +100,7 @@ def split_moras(kana: str):
         if c in "ゃゅょャュョ":
             s += c
         else:
-            moras += s
+            moras.append(s)
             s = c
     moras += s
     return moras
@@ -107,24 +108,63 @@ def split_moras(kana: str):
 if __name__ == "__main__":
     pos_words = get_pos_words("n2.csv")
     accents = read_accents("accents.txt")
+    print('<html lang="ja">')
+    print('''<head>
+    <meta charset="UTF-8">
+    <style>
+        td {
+            padding: .1em;
+        }
+        span {
+            padding: 0 .1em;
+            border: 1px grey;
+        }
+        .high {
+            border-top-style: solid;
+        }
+        .low {
+            border-bottom-style: solid;
+        }
+        .high + .low, .low + .high {
+            border-left-style: solid;
+        }
+    </style>
+    </head>''')
+    print("<body>")
     for cat, pos_list in CAT_MAP.items():
         words: list[JLPTWord] = sum([pos_words[pos] for pos in pos_list], [])
         words.sort(key=lambda w: (w.kana, w.kanji))
-        print(cat.upper())
+        # print(cat.upper())
+        print(f"<div>{cat.upper()}</div>")
         kanji_len = max(len(w.kanji) for w in words)
-        kana_len = max(len(w.kana) for w in words)
+        kana_len = max(len(w.kana) for w in words) + 1
         n = len(words)
         n_len = len(str(n))
+        print("<table>")
         for i, w in enumerate(words):
-            index_jap = str(i+1).translate(NUM_TABLE)
-            index_str = index_jap.ljust(n_len, "　") + "　"
-            kanji_str = w.kanji.ljust(kanji_len, "　")
-            kana_str = w.kana.ljust(kana_len, "　")
-            moras = "-".join(split_moras(w.kana))
+            index = str(i+1)
+            moras = split_moras(w.kana)
             pitch_map = accents.get(w.kanji)
+            pitch_str = "-"
             if pitch_map is not None:
                 pitch = pitch_map.get(w.kana)
+                if pitch is not None:
+                    pitch_str = pitch
+                    p = int(pitch)
+                    n = len(moras)
+                    if p == 0:
+                        pitch_pattern = [0] + [1] * (n-1)
+                    elif p == 1:
+                        pitch_pattern = [1] + [0] * (n-1)
+                    else:
+                        pitch_pattern = [0] + [1] * (p-1) + [0] * (n-p)
+            if pitch_pattern is None:
+                kana = w.kana
             else:
-                pitch = "-"
-            print(index_str + kanji_str, kana_str, moras, pitch, w.meaning, sep="　")
-        print()
+                kana = "".join(f'<span class="{"high" if p == 1 else "low"}">{m}</span>' for m, p in zip(moras, pitch_pattern))
+            # print(index_str + kanji_str, kana_str, pitch, w.meaning, sep="　")
+            cells = "".join(f"<td>{t}</td>" for t in [index, w.kanji, kana, pitch_str, w.meaning])
+            print(f"<tr>{cells}</tr>")
+        print("</table>")
+        print("</body>")
+        print("</html>")
